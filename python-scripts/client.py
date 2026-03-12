@@ -1,27 +1,96 @@
 import socket
+import serial
+import threading
 
-# Use the IP address from your ipconfig output
-HOST = '10.36.18.242' 
-PORT = 65432
+# ----------------------------
+# Configuration
+# ----------------------------
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = 9000
 
-# Create a TCP/IP socket
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+SERIAL_PORT = "COM5"
+SERIAL_BAUD = 9600
+
+
+def forward_serial_to_server(ser, sock):
+    """
+    Continuously read lines from serial and forward them to the server.
+    """
+    while True:
+        try:
+            line = ser.readline().decode("utf-8", errors="replace").strip()
+
+            if not line:
+                continue
+
+            print(f"[SERIAL] {line}")
+
+            message = line + "\n"
+            sock.sendall(message.encode("utf-8"))
+
+        except Exception as e:
+            print(f"[ERROR serial->server] {e}")
+            break
+
+
+def receive_from_server(sock):
+    """
+    Continuously read data from the server and print it.
+    """
+    buffer = ""
+
+    while True:
+        try:
+            data = sock.recv(4096)
+
+            if not data:
+                print("Server disconnected")
+                break
+
+            buffer += data.decode("utf-8", errors="replace")
+
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.strip()
+                if line:
+                    print(f"[SERVER] {line}")
+
+        except Exception as e:
+            print(f"[ERROR server->client] {e}")
+            break
+
+
+def main():
     try:
-        # Connect to the server
-        s.connect((HOST, PORT))
-        print(f"Successfully connected to {HOST}:{PORT}")
-        
-        # Send a message (must be encoded to bytes)
-        message = "Hello from the other device!"
-        s.sendall(message.encode())
-        
-        # Wait for a response from the server
-        data = s.recv(1024)
-        print(f"Received from server: {data.decode()}")
-        
+        # Open serial port
+        ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=1)
+        print(f"Opened serial port {SERIAL_PORT}")
+
+        # Connect to server
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((SERVER_HOST, SERVER_PORT))
+
+        print(f"Connected to server {SERVER_HOST}:{SERVER_PORT}")
+
+        # Start thread to receive server messages
+        threading.Thread(
+            target=receive_from_server,
+            args=(sock,),
+            daemon=True
+        ).start()
+
+        # Forward serial telemetry
+        forward_serial_to_server(ser, sock)
+
+    except serial.SerialException as e:
+        print(f"Serial error: {e}")
+
     except ConnectionRefusedError:
-        print("Error: The connection was refused. Is the server script running?")
-    except TimeoutError:
-        print("Error: Connection timed out. Check your firewall or network settings.")
+        print("Connection refused. Is the arbiter running?")
+
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"Unexpected error: {e}")
+
+
+if __name__ == "__main__":
+    main()
