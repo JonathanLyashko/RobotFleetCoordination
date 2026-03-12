@@ -1,15 +1,21 @@
 import socket
 import serial
 import threading
+import os
+from dotenv import load_dotenv
 
 # ----------------------------
 # Configuration
 # ----------------------------
-SERVER_HOST = "127.0.0.1"
+
+load_dotenv()
+
 SERVER_PORT = 9000
 
-SERIAL_PORT = "COM5"
 SERIAL_BAUD = 9600
+
+SERVER_HOST = os.getenv('SERVER_HOST_IP_ADDRESS')
+SERIAL_PORT = os.getenv('LOCAL_SERIAL_PORT')
 
 
 def forward_serial_to_server(ser, sock):
