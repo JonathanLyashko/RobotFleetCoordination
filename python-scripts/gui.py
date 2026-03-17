@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk
 from collections import defaultdict
 import math
+import time
 
 import matplotlib
 matplotlib.use("TkAgg")
@@ -12,6 +13,7 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MultipleLocator
 from matplotlib.patches import Polygon
 from itertools import cycle
+from messages import PauseMessage, ResumeMessage, StopMessage, PathAssignmentMessage, Waypoint, MotionSettings
 
 
 
@@ -41,17 +43,24 @@ class TelemetryGUI:
     ARENA_SIZE_CM = 400
     HALF_ARENA_CM = ARENA_SIZE_CM / 2
     GRID_SPACING_CM = 10
+    ECHO_WINDOW_S = 10.0
+    GRID_DIM_CELLS = 40
+    DEFAULT_TEST_DISTANCE_CM = 30.0
+    DEFAULT_TURN_SPEED = 150
+    DEFAULT_DRIVE_SPEED = 200
 
     # Robot safety box
     SAFETY_BOX_SIZE_CM = 40.0
     SAFETY_BOX_HALF_CM = SAFETY_BOX_SIZE_CM / 2.0
 
-    def __init__(self):
+    def __init__(self, command_sender=None):
         self.root = tk.Tk()
         self.root.title("Robot Telemetry Dashboard")
         self.root.geometry("1600x900")
 
+        self.command_sender = command_sender
         self.telemetry_queue = queue.Queue()
+        self.test_path_counter = int(time.time())
 
         # latest per-robot state
         self.robot_states = {}
@@ -64,8 +73,10 @@ class TelemetryGUI:
             "theta": [],
             "front_ultra": [],
             "left_ultra": [],
+            "front_echo_t": [],
             "front_echo_x": [],
             "front_echo_y": [],
+            "left_echo_t": [],
             "left_echo_x": [],
             "left_echo_y": [],
         })
@@ -137,6 +148,98 @@ class TelemetryGUI:
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=right_panel)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Create Control Board
+        controls_frame = ttk.LabelFrame(left_panel, text="Test Commands")
+        controls_frame.pack(fill=tk.X, expand=False, padx=(0, 8), pady=(8, 0))
+
+        ttk.Label(controls_frame, text="Target Robot:").pack(fill=tk.X, pady=(4, 2))
+
+        self.selected_robot_var = tk.StringVar(value="")
+        self.robot_selector = ttk.Combobox(
+            controls_frame,
+            textvariable=self.selected_robot_var,
+            state="readonly",
+            values=[],
+        )
+        self.robot_selector.pack(fill=tk.X, pady=(0, 6))
+
+        self.selected_robot_summary_var = tk.StringVar(value="Select a robot to send a test path.")
+        ttk.Label(
+            controls_frame,
+            textvariable=self.selected_robot_summary_var,
+            wraplength=280,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(0, 6))
+
+        ttk.Button(controls_frame, text="Pause", command=self._send_pause).pack(fill=tk.X, pady=2)
+        ttk.Button(controls_frame, text="Resume", command=self._send_resume).pack(fill=tk.X, pady=2)
+        ttk.Button(controls_frame, text="Stop", command=self._send_stop).pack(fill=tk.X, pady=2)
+        ttk.Button(controls_frame, text="Send Straight Test", command=self._send_straight_test_path).pack(fill=tk.X, pady=2)
+        ttk.Button(controls_frame, text="Send 180 Turn Test", command=self._send_turnaround_test_path).pack(fill=tk.X, pady=2)
+        ttk.Button(controls_frame, text="Send L Test Path", command=self._send_test_path).pack(fill=tk.X, pady=2)
+
+        coordination_frame = ttk.LabelFrame(left_panel, text="Grid Coordination")
+        coordination_frame.pack(fill=tk.X, expand=False, padx=(0, 8), pady=(8, 0))
+
+        ttk.Label(
+            coordination_frame,
+            text="4m x 4m arena split into 40 x 40 cells at 10 cm resolution.",
+            wraplength=280,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(4, 6))
+
+        ttk.Label(coordination_frame, text="Robot 1").pack(fill=tk.X)
+        self.grid_robot_one_var = tk.StringVar(value="")
+        self.grid_robot_one_selector = ttk.Combobox(
+            coordination_frame,
+            textvariable=self.grid_robot_one_var,
+            state="readonly",
+            values=[],
+        )
+        self.grid_robot_one_selector.pack(fill=tk.X, pady=(0, 4))
+
+        robot_one_goal = ttk.Frame(coordination_frame)
+        robot_one_goal.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(robot_one_goal, text="Goal row").grid(row=0, column=0, sticky="w")
+        self.grid_robot_one_row_var = tk.StringVar(value="10")
+        ttk.Entry(robot_one_goal, textvariable=self.grid_robot_one_row_var, width=6).grid(row=0, column=1, padx=(6, 12), sticky="w")
+        ttk.Label(robot_one_goal, text="Goal col").grid(row=0, column=2, sticky="w")
+        self.grid_robot_one_col_var = tk.StringVar(value="10")
+        ttk.Entry(robot_one_goal, textvariable=self.grid_robot_one_col_var, width=6).grid(row=0, column=3, padx=(6, 0), sticky="w")
+
+        ttk.Label(coordination_frame, text="Robot 2").pack(fill=tk.X)
+        self.grid_robot_two_var = tk.StringVar(value="")
+        self.grid_robot_two_selector = ttk.Combobox(
+            coordination_frame,
+            textvariable=self.grid_robot_two_var,
+            state="readonly",
+            values=[],
+        )
+        self.grid_robot_two_selector.pack(fill=tk.X, pady=(0, 4))
+
+        robot_two_goal = ttk.Frame(coordination_frame)
+        robot_two_goal.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(robot_two_goal, text="Goal row").grid(row=0, column=0, sticky="w")
+        self.grid_robot_two_row_var = tk.StringVar(value="20")
+        ttk.Entry(robot_two_goal, textvariable=self.grid_robot_two_row_var, width=6).grid(row=0, column=1, padx=(6, 12), sticky="w")
+        ttk.Label(robot_two_goal, text="Goal col").grid(row=0, column=2, sticky="w")
+        self.grid_robot_two_col_var = tk.StringVar(value="20")
+        ttk.Entry(robot_two_goal, textvariable=self.grid_robot_two_col_var, width=6).grid(row=0, column=3, padx=(6, 0), sticky="w")
+
+        self.grid_plan_summary_var = tk.StringVar(value="Select two robots and set destination cells (0-39).")
+        ttk.Label(
+            coordination_frame,
+            textvariable=self.grid_plan_summary_var,
+            wraplength=280,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(0, 6))
+
+        ttk.Button(
+            coordination_frame,
+            text="Start Two-Robot Traverse",
+            command=self._send_two_robot_traverse,
+        ).pack(fill=tk.X, pady=2)
     
     def _get_robot_color(self, robot_id: str) -> str:
         if robot_id not in self.robot_colors:
@@ -179,6 +282,19 @@ class TelemetryGUI:
     # ----------------------------
     # Queue processing
     # ----------------------------
+    def _prune_echo_history(self, hist: dict, current_t_s: float):
+        cutoff_t_s = current_t_s - self.ECHO_WINDOW_S
+
+        while hist["front_echo_t"] and hist["front_echo_t"][0] < cutoff_t_s:
+            hist["front_echo_t"].pop(0)
+            hist["front_echo_x"].pop(0)
+            hist["front_echo_y"].pop(0)
+
+        while hist["left_echo_t"] and hist["left_echo_t"][0] < cutoff_t_s:
+            hist["left_echo_t"].pop(0)
+            hist["left_echo_x"].pop(0)
+            hist["left_echo_y"].pop(0)
+
     def _process_queue(self):
         updated = False
 
@@ -194,9 +310,10 @@ class TelemetryGUI:
             theta = telemetry.get("theta_deg")
             front = telemetry.get("front_ultrasonic_cm")
             left = telemetry.get("left_ultrasonic_cm")
+            t_s = float(t) / 1000.0 if t is not None else None
 
             if t is not None:
-                hist["t"].append(float(t) / 1000.0)
+                hist["t"].append(t_s)
             if x is not None:
                 hist["x"].append(float(x))
             if y is not None:
@@ -222,6 +339,7 @@ class TelemetryGUI:
                     )
                     if pt is not None:
                         ex, ey = pt
+                        hist["front_echo_t"].append(t_s if t_s is not None else 0.0)
                         hist["front_echo_x"].append(ex)
                         hist["front_echo_y"].append(ey)
 
@@ -234,13 +352,18 @@ class TelemetryGUI:
                     )
                     if pt is not None:
                         ex, ey = pt
+                        hist["left_echo_t"].append(t_s if t_s is not None else 0.0)
                         hist["left_echo_x"].append(ex)
                         hist["left_echo_y"].append(ey)
+
+            if t_s is not None:
+                self._prune_echo_history(hist, t_s)
 
             updated = True
 
         if updated:
             self._refresh_table()
+            self._refresh_robot_selector()
             self._refresh_plot()
 
         self.root.after(100, self._process_queue)
@@ -452,3 +575,231 @@ class TelemetryGUI:
             self.ax_traj.legend(unique.values(), unique.keys(), loc="best")
 
         self.canvas.draw()
+    
+    # ----------------------------
+    # Control Board
+    # ----------------------------
+    def _get_selected_robot_id(self) -> str | None:
+        robot_id = self.selected_robot_var.get().strip()
+        if not robot_id:
+            return None
+        return robot_id
+
+    def _get_selected_robot_state(self) -> dict | None:
+        robot_id = self._get_selected_robot_id()
+        if robot_id is None:
+            return None
+        return self.robot_states.get(robot_id)
+
+    def _get_test_distance_cm(self) -> float:
+        return self.DEFAULT_TEST_DISTANCE_CM
+
+    def _get_motion_settings(self) -> MotionSettings:
+        return MotionSettings(
+            turn_speed_deg_per_sec=self.DEFAULT_TURN_SPEED,
+            drive_speed_deg_per_sec=self.DEFAULT_DRIVE_SPEED,
+        )
+
+    def _next_test_path_id(self) -> int:
+        self.test_path_counter += 1
+        return self.test_path_counter
+
+    def _send_pause(self):
+        robot_id = self._get_selected_robot_id()
+        if robot_id and self.command_sender:
+            msg = PauseMessage(
+                robot_id=robot_id,
+                reason="gui_pause_button",
+            )
+            self.command_sender(msg)
+
+    def _send_resume(self):
+        robot_id = self._get_selected_robot_id()
+        if robot_id and self.command_sender:
+            msg = ResumeMessage(robot_id=robot_id)
+            self.command_sender(msg)
+
+    def _send_stop(self):
+        robot_id = self._get_selected_robot_id()
+        if robot_id and self.command_sender:
+            msg = StopMessage(
+                robot_id=robot_id,
+                reason="gui_stop_button",
+            )
+            self.command_sender(msg)
+
+    def _send_straight_test_path(self):
+        robot_id = self._get_selected_robot_id()
+        robot_state = self._get_selected_robot_state()
+
+        if not robot_id or not self.command_sender or not robot_state:
+            return
+
+        x = float(robot_state.get("x_cm", 0.0))
+        y = float(robot_state.get("y_cm", 0.0))
+        theta_deg = float(robot_state.get("theta_deg", 0.0))
+        theta_rad = math.radians(theta_deg)
+        distance_cm = self._get_test_distance_cm()
+
+        wp_x = min(max(x + distance_cm * math.cos(theta_rad), 0.0), 400.0)
+        wp_y = min(max(y + distance_cm * math.sin(theta_rad), 0.0), 400.0)
+
+        msg = PathAssignmentMessage(
+            robot_id=robot_id,
+            path_id=self._next_test_path_id(),
+            replace_existing=True,
+            waypoints=[Waypoint(x_cm=wp_x, y_cm=wp_y)],
+            motion=self._get_motion_settings(),
+        )
+
+        self.command_sender(msg)
+
+    def _send_turnaround_test_path(self):
+        robot_id = self._get_selected_robot_id()
+        robot_state = self._get_selected_robot_state()
+
+        if not robot_id or not self.command_sender or not robot_state:
+            return
+
+        x = float(robot_state.get("x_cm", 0.0))
+        y = float(robot_state.get("y_cm", 0.0))
+        theta_deg = float(robot_state.get("theta_deg", 0.0))
+        theta_rad = math.radians(theta_deg)
+        distance_cm = self._get_test_distance_cm()
+
+        wp_x = min(max(x - distance_cm * math.cos(theta_rad), 0.0), 400.0)
+        wp_y = min(max(y - distance_cm * math.sin(theta_rad), 0.0), 400.0)
+
+        msg = PathAssignmentMessage(
+            robot_id=robot_id,
+            path_id=self._next_test_path_id(),
+            replace_existing=True,
+            waypoints=[Waypoint(x_cm=wp_x, y_cm=wp_y)],
+            motion=self._get_motion_settings(),
+        )
+
+        self.command_sender(msg)
+
+    def _send_test_path(self):
+        robot_id = self._get_selected_robot_id()
+        robot_state = self._get_selected_robot_state()
+
+        if not robot_id or not self.command_sender or not robot_state:
+            return
+
+        # Start from the robot's current believed pose and send a simple
+        # three-waypoint path in the global arena frame.
+        x = float(robot_state.get("x_cm", 0.0))
+        y = float(robot_state.get("y_cm", 0.0))
+
+        # Simple "Γ"-shaped test path, clipped to the 0..400 cm arena
+        wp1_x = min(max(x + 20.0, 0.0), 400.0)
+        wp1_y = min(max(y,         0.0), 400.0)
+
+        wp2_x = min(max(x + 40.0, 0.0), 400.0)
+        wp2_y = min(max(y,         0.0), 400.0)
+
+        wp3_x = min(max(x + 40.0, 0.0), 400.0)
+        wp3_y = min(max(y + 40.0, 0.0), 400.0)
+
+        msg = PathAssignmentMessage(
+            robot_id=robot_id,
+            path_id=self._next_test_path_id(),
+            replace_existing=True,
+            waypoints=[
+                Waypoint(x_cm=wp1_x, y_cm=wp1_y),
+                Waypoint(x_cm=wp2_x, y_cm=wp2_y),
+                Waypoint(x_cm=wp3_x, y_cm=wp3_y),
+            ],
+            motion=self._get_motion_settings(),
+        )
+
+        self.command_sender(msg)
+
+    def _parse_goal_cell(self, row_var: tk.StringVar, col_var: tk.StringVar) -> tuple[int, int] | None:
+        try:
+            row = int(row_var.get())
+            col = int(col_var.get())
+        except (TypeError, ValueError):
+            return None
+
+        if not (0 <= row < self.GRID_DIM_CELLS and 0 <= col < self.GRID_DIM_CELLS):
+            return None
+
+        return row, col
+
+    def _send_two_robot_traverse(self):
+        if not self.command_sender:
+            return
+
+        robot_one = self.grid_robot_one_var.get().strip()
+        robot_two = self.grid_robot_two_var.get().strip()
+        if not robot_one or not robot_two or robot_one == robot_two:
+            self.grid_plan_summary_var.set("Pick two different robots before starting a coordinated traverse.")
+            return
+
+        goal_one = self._parse_goal_cell(self.grid_robot_one_row_var, self.grid_robot_one_col_var)
+        goal_two = self._parse_goal_cell(self.grid_robot_two_row_var, self.grid_robot_two_col_var)
+        if goal_one is None or goal_two is None:
+            self.grid_plan_summary_var.set("Goal cells must be integers from 0 to 39.")
+            return
+
+        if goal_one == goal_two:
+            self.grid_plan_summary_var.set("Choose different goal cells for the two robots.")
+            return
+
+        self.grid_plan_summary_var.set(
+            f"Planning coordinated traverse: {robot_one} -> ({goal_one[0]}, {goal_one[1]}), "
+            f"{robot_two} -> ({goal_two[0]}, {goal_two[1]})."
+        )
+
+        self.command_sender({
+            "type": "coordinated_traverse",
+            "robots": [
+                {"robot_id": robot_one, "goal_row": goal_one[0], "goal_col": goal_one[1]},
+                {"robot_id": robot_two, "goal_row": goal_two[0], "goal_col": goal_two[1]},
+            ],
+        })
+    
+
+    def _refresh_robot_selector(self):
+        robot_ids = sorted(self.robot_states.keys())
+        self.robot_selector["values"] = robot_ids
+        self.grid_robot_one_selector["values"] = robot_ids
+        self.grid_robot_two_selector["values"] = robot_ids
+
+        current = self.selected_robot_var.get()
+
+        # If current selection disappeared, clear it
+        if current and current not in robot_ids:
+            self.selected_robot_var.set("")
+
+        # If nothing is selected and robots exist, pick the first one
+        if not self.selected_robot_var.get() and robot_ids:
+            self.selected_robot_var.set(robot_ids[0])
+
+        if not self.grid_robot_one_var.get() and robot_ids:
+            self.grid_robot_one_var.set(robot_ids[0])
+
+        if not self.grid_robot_two_var.get() and len(robot_ids) > 1:
+            self.grid_robot_two_var.set(robot_ids[1])
+        elif not self.grid_robot_two_var.get() and robot_ids:
+            self.grid_robot_two_var.set(robot_ids[0])
+
+        selected_state = self._get_selected_robot_state()
+        if selected_state is None:
+            self.selected_robot_summary_var.set("Select a robot to send a test path.")
+            return
+
+        robot_id = self._get_selected_robot_id()
+        state = selected_state.get("state", "unknown")
+        path_id = selected_state.get("path_id", "-")
+        waypoint_index = selected_state.get("waypoint_index", "-")
+        x = float(selected_state.get("x_cm", 0.0))
+        y = float(selected_state.get("y_cm", 0.0))
+        theta = float(selected_state.get("theta_deg", 0.0))
+
+        self.selected_robot_summary_var.set(
+            f"{robot_id}: state={state}, path={path_id}, waypoint={waypoint_index}, "
+            f"pose=({x:.1f}, {y:.1f}, {theta:.1f} deg)"
+        )
