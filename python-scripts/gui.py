@@ -13,7 +13,7 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MultipleLocator
 from matplotlib.patches import Polygon
 from itertools import cycle
-from messages import PauseMessage, ResumeMessage, StopMessage, PathAssignmentMessage, Waypoint, MotionSettings
+from messages import PauseMessage, ResumeMessage, StopMessage, ToggleGripperMessage, PathAssignmentMessage, Waypoint, MotionSettings
 
 
 
@@ -175,6 +175,7 @@ class TelemetryGUI:
         ttk.Button(controls_frame, text="Pause", command=self._send_pause).pack(fill=tk.X, pady=2)
         ttk.Button(controls_frame, text="Resume", command=self._send_resume).pack(fill=tk.X, pady=2)
         ttk.Button(controls_frame, text="Stop", command=self._send_stop).pack(fill=tk.X, pady=2)
+        ttk.Button(controls_frame, text="Toggle Gripper", command=self._send_toggle_gripper).pack(fill=tk.X, pady=2)
         ttk.Button(controls_frame, text="Send Straight Test", command=self._send_straight_test_path).pack(fill=tk.X, pady=2)
         ttk.Button(controls_frame, text="Send 180 Turn Test", command=self._send_turnaround_test_path).pack(fill=tk.X, pady=2)
         ttk.Button(controls_frame, text="Send L Test Path", command=self._send_test_path).pack(fill=tk.X, pady=2)
@@ -626,6 +627,12 @@ class TelemetryGUI:
                 robot_id=robot_id,
                 reason="gui_stop_button",
             )
+            self.command_sender(msg)
+
+    def _send_toggle_gripper(self):
+        robot_id = self._get_selected_robot_id()
+        if robot_id and self.command_sender:
+            msg = ToggleGripperMessage(robot_id=robot_id)
             self.command_sender(msg)
 
     def _send_straight_test_path(self):

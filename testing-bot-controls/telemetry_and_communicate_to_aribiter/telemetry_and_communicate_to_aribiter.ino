@@ -20,6 +20,10 @@ int current_waypoint_index = -1;
 const float WHEEL_DIAMETER_CM = 10.16;     // 4 inches
 const float WHEEL_BASE_CM = 26.035;        // 10.25 inches
 const float WHEEL_CIRCUMFERENCE_CM = PI * WHEEL_DIAMETER_CM;
+const int GRIPPER_SERVO_ID = 1;
+const int GRIPPER_OPEN_DEG = 100;
+const int GRIPPER_CLOSED_DEG = 35;
+const int GRIPPER_SERVO_SPEED_PERCENT = 75;
 
 // ==============================
 // Pose state
@@ -52,6 +56,7 @@ PrimitiveType active_primitive = PRIM_NONE;
 bool path_loaded = false;
 bool path_paused = false;
 bool path_started_sent = false;
+bool gripper_closed = false;
 
 const float POSITION_TOLERANCE_CM = 2.0;
 const float HEADING_TOLERANCE_DEG = 4.0;
@@ -575,9 +580,26 @@ void performStop() {
   printPoseJSON();
 }
 
+void performToggleGripper() {
+  gripper_closed = !gripper_closed;
+  if (gripper_closed) {
+    prizm.setServoPosition(GRIPPER_SERVO_ID, GRIPPER_CLOSED_DEG);
+  } else {
+    prizm.setServoPosition(GRIPPER_SERVO_ID, GRIPPER_OPEN_DEG);
+  }
+
+  sendAck("toggle_gripper");
+  sendStatus(robot_state, gripper_closed ? "gripper_closed" : "gripper_opened");
+}
+
 void handleStop(const char* json) {
   if (!jsonTargetsThisRobot(json)) return;
   performStop();
+}
+
+void handleToggleGripper(const char* json) {
+  if (!jsonTargetsThisRobot(json)) return;
+  performToggleGripper();
 }
 
 void handleControlOpcode(char opcode) {
@@ -599,6 +621,8 @@ void handleIncomingJson(const char* json) {
     handleResume(json);
   } else if (jsonHasType(json, "stop")) {
     handleStop(json);
+  } else if (jsonHasType(json, "toggle_gripper")) {
+    handleToggleGripper(json);
   }
 }
 
@@ -712,6 +736,8 @@ void maybeStartNextPrimitive() {
 void setup() {
   prizm.PrizmBegin();
   Serial.begin(115200);
+  prizm.setServoSpeed(GRIPPER_SERVO_ID, GRIPPER_SERVO_SPEED_PERCENT);
+  prizm.setServoPosition(GRIPPER_SERVO_ID, GRIPPER_OPEN_DEG);
 
   setRobotState("ready");
   maybeUpdateSensors();

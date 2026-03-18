@@ -17,6 +17,7 @@ MessageType = Literal[
     "stop",
     "pause",
     "resume",
+    "toggle_gripper",
     "heartbeat",
     "heartbeat_ack",
 ]
@@ -266,6 +267,15 @@ class ResumeMessage(Message):
 
     def __init__(self, robot_id: str):
         super().__init__("resume")
+        self.robot_id = robot_id
+
+
+@dataclass
+class ToggleGripperMessage(Message):
+    robot_id: str
+
+    def __init__(self, robot_id: str):
+        super().__init__("toggle_gripper")
         self.robot_id = robot_id
 
 
